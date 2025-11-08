@@ -5,7 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: zigscan-indexer-saad
+    container_name: zigchain-indexer-clickhouse
     network_mode: "host"
     env_file:
       - .env
