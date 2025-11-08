@@ -1,0 +1,26 @@
+{
+  "name": "zigscan-indexer",
+  "version": "1.0.0",
+  "description": "ZigChain decoded indexer",
+  "main": "src/core/orchestrator.js",
+  "scripts": {
+    "init-clickhouse": "node scripts/init_clickhouse.js",
+    "start": "node src/core/orchestrator.js",
+    "worker": "node src/core/worker.js",
+    "indexer": "node src/core/indexer.js",
+    "retry-failed": "node scripts/retry_failed.js",
+    "check-msgs": "node src/tools/check_msgs.js",
+    "monitor": "node scripts/monitor_indexer.js",
+    "test-connection": "node scripts/test_connection.js",
+    "docker:build": "docker build -f docker/Dockerfile -t zigscan-indexer .",
+    "docker:up": "docker-compose -f docker/docker-compose.yml up -d",
+    "docker:down": "docker-compose -f docker/docker-compose.yml down",
+    "docker:logs": "docker-compose -f docker/docker-compose.yml logs -f zigscan-indexer"
+  },
+  "dependencies": {
+    "axios": "^1.7.7",
+    "pg": "^8.12.0",
+    "@clickhouse/client": "^1.8.0",
+    "dotenv": "^16.4.5"
+  }
+}
