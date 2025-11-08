@@ -184,22 +184,16 @@ async function launchWorkers() {
               if (grp.remaining <= 0) {
                 // finalize parent
                 if (!grp.failed) {
-                  await targetDB.query(`DELETE FROM work_queue WHERE id = $1`, [work.id]);
+                  await ch.deleteWorkQueueItem(work.id);
                   console.log(`✅ Group completed: ${work.start_height}-${work.end_height}`);
                 } else {
-                  await targetDB.query(`
-                    UPDATE work_queue 
-                    SET status = 'failed', updated_at = NOW(), 
-                        error_message = COALESCE(error_message,'') || ' [group_failed]'
-                    WHERE id = $1
-                  `, [work.id]);
+                  await ch.updateWorkQueueStatus(work.id, 'failed', '[group_failed]');
                   console.error(`❌ Group failed: ${work.start_height}-${work.end_height}`);
                 }
                 activeGroups.delete(work.id);
                 // Sync index_state with actual DB progress
                 try {
-                  const r = await targetDB.query(`SELECT COALESCE(MAX(height), 0) AS max_h FROM blocks`);
-                  const maxH = parseInt(r.rows[0].max_h || '0', 10);
+                  const maxH = await ch.getMaxBlockHeight();
                   if (maxH > 0) await updateIndexState(maxH);
                 } catch (syncErr) {
                   console.error(`❌ Error syncing index_state from blocks: ${syncErr.message}`);
