@@ -125,25 +125,29 @@ async function launchWorkers() {
 
     // Get the next pending work item (prefer newer ranges; optionally enforce window and target cap)
     // ClickHouse: Use simple SELECT with FINAL to get deduplicated data
-    const params = [];
     let sql = `
       SELECT id, start_height, end_height 
       FROM work_queue FINAL
       WHERE status = 'pending'
     `;
+    
+    const conditions = [];
     if (!BACKFILL_MODE && minAllowedStart !== null) {
-      sql += ` AND start_height >= $${params.length + 1}`;
-      params.push(minAllowedStart);
+      conditions.push(`start_height >= ${minAllowedStart}`);
     }
     if (syncTarget) {
-      sql += ` AND end_height <= $${params.length + 1}`;
-      params.push(syncTarget);
+      conditions.push(`end_height <= ${syncTarget}`);
     }
+    
+    if (conditions.length > 0) {
+      sql += ' AND ' + conditions.join(' AND ');
+    }
+    
     sql += `
       ORDER BY id ASC
       LIMIT 1
     `;
-    const workItem = await targetDB.query(sql, params);
+    const workItem = await targetDB.query(sql);
     if (workItem.rows.length === 0) {
       console.log('⚠️ No pending work items available');
       return;
@@ -182,9 +186,9 @@ async function launchWorkers() {
               if (code !== 0) grp.failed = true;
               grp.remaining -= 1;
               if (grp.remaining <= 0) {
-                // finalize parent
+                // finalize parent - mark as done instead of deleting (ClickHouse ALTER DELETE is async)
                 if (!grp.failed) {
-                  await ch.deleteWorkQueueItem(work.id);
+                  await ch.updateWorkQueueStatus(work.id, 'done');
                   console.log(`✅ Group completed: ${work.start_height}-${work.end_height}`);
                 } else {
                   await ch.updateWorkQueueStatus(work.id, 'failed', '[group_failed]');
@@ -248,7 +252,7 @@ async function detectAndFillGaps() {
     }
 
     // Check if queue is too full for gap processing
-    const queueStatus = await targetDB.query('SELECT COUNT(*) as count FROM work_queue WHERE status IN (\'pending\', \'processing\')');
+    const queueStatus = await targetDB.query('SELECT COUNT(*) as count FROM work_queue FINAL WHERE status IN (\'pending\', \'processing\')');
     const queueCount = parseInt(queueStatus.rows[0].count);
     const maxQueueItems = parseInt(process.env.MAX_QUEUE_ITEMS || 50);
     
@@ -323,7 +327,7 @@ async function cleanupOldWorkQueue() {
     const { rows: [mh] } = await targetDB.query('SELECT COALESCE(MAX(height), 0) AS max_h FROM blocks');
     const maxH = parseInt(mh.max_h || '0', 10);
     const minAllowedStart = Math.max(START_HEIGHT, maxH - BACKFILL_WINDOW);
-    const { rows: [qc] } = await targetDB.query(`SELECT COUNT(*)::int AS cnt FROM work_queue WHERE status IN ('pending','processing')`);
+    const { rows: [qc] } = await targetDB.query(`SELECT COUNT(*) AS cnt FROM work_queue FINAL WHERE status IN ('pending','processing')`);
     const queueCnt = parseInt(qc.cnt || '0', 10);
     if (queueCnt > MAX_QUEUE_ITEMS) {
       const del = await targetDB.query(`
@@ -404,23 +408,16 @@ async function isRangeComplete(start, end) {
 async function reconcileProcessingItems(limit = 50) {
   const { rows: items } = await targetDB.query(
     `SELECT id, start_height, end_height
-     FROM work_queue
+     FROM work_queue FINAL
      WHERE status = 'processing'
      ORDER BY id ASC
-     LIMIT $1`,
-    [limit]
+     LIMIT ${limit}`
   );
   let fixed = 0;
   for (const it of items) {
     try {
       if (await isRangeComplete(it.start_height, it.end_height)) {
-        await targetDB.query(
-          `UPDATE work_queue
-           SET status = 'done', updated_at = NOW(),
-               error_message = COALESCE(error_message,'') || ' [auto_mark_done_reconcile]'
-           WHERE id = $1`,
-          [it.id]
-        );
+        await ch.updateWorkQueueStatus(it.id, 'done', '[auto_mark_done_reconcile]');
         fixed++;
       }
     } catch (e) {
@@ -454,8 +451,8 @@ async function mainLoop() {
 
     // Proactively seed queue if empty or under capacity and chain has advanced
     const [{ rows: [p] }, { rows: [r] }] = await Promise.all([
-      targetDB.query(`SELECT COUNT(*)::int AS c FROM work_queue WHERE status='pending'`),
-      targetDB.query(`SELECT COUNT(*)::int AS c FROM work_queue WHERE status='processing'`),
+      targetDB.query(`SELECT COUNT(*) AS c FROM work_queue FINAL WHERE status='pending'`),
+      targetDB.query(`SELECT COUNT(*) AS c FROM work_queue FINAL WHERE status='processing'`),
     ]);
     const pending = parseInt(p.c || '0', 10);
     const processing = parseInt(r.c || '0', 10);
