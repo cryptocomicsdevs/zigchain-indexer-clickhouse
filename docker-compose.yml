@@ -1,30 +1,6 @@
 version: '3.8'
 
 services:
-  clickhouse:
-    image: clickhouse/clickhouse-server:latest
-    container_name: zigchain-clickhouse
-    ports:
-      - "8123:8123"  # HTTP interface
-      - "9000:9000"  # Native protocol
-    environment:
-      CLICKHOUSE_DB: ${CLICKHOUSE_DATABASE:-test_db}
-      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
-      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
-    volumes:
-      - clickhouse-data:/var/lib/clickhouse
-      - clickhouse-logs:/var/log/clickhouse-server
-    ulimits:
-      nofile:
-        soft: 262144
-        hard: 262144
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   zigscan-indexer:
     build:
       context: .
@@ -36,9 +12,9 @@ services:
     environment:
       # ClickHouse connection
       CLICKHOUSE_URL: ${CLICKHOUSE_URL:-http://localhost:8123}
-      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
-      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
-      CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-test_db}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-ziguser}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-ABAK3fqyxdnA}
+      CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-zigchain_mainnet_indexer}
       # Worker configuration
       NUM_WORKERS: ${NUM_WORKERS:-2}
       START_HEIGHT: ${START_HEIGHT:-1}
@@ -58,18 +34,9 @@ services:
       - ./scripts:/app/zigscan-indexer/scripts
     working_dir: /app/zigscan-indexer
     restart: unless-stopped
-    depends_on:
-      clickhouse:
-        condition: service_healthy
     deploy:
       resources:
         limits:
           memory: 8G
         reservations:
           memory: 2G
-
-volumes:
-  clickhouse-data:
-    driver: local
-  clickhouse-logs:
-    driver: local
